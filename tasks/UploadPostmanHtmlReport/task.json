@@ -1,5 +1,5 @@
 {
-  "id": "f5384bf0-1b5c-11ea-b0cc-5b064956a213",
+  "id": "575a0243-fbcf-4695-98cf-118d49c1e2d8",
   "name": "UploadPostmanHtmlReport",
   "friendlyName": "Upload Postman HTML Report",
   "description": "Upload Postman HTML Report",
@@ -15,7 +15,7 @@
   "version": {
     "Major": "1",
     "Minor": "1",
-    "Patch": "3"
+    "Patch": "5"
   },
   "minimumAgentVersion": "1.95.0",
   "instanceNameFormat": "Upload Postman Html Report",

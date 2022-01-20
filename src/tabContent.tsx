@@ -4,8 +4,6 @@ import * as React from "react"
 import * as ReactDOM from "react-dom"
 import * as SDK from "azure-devops-extension-sdk"
 
-import fetch from "node-fetch"
-
 import { getClient } from "azure-devops-extension-api"
 import { ReleaseEnvironment, ReleaseRestClient, ReleaseTaskAttachment } from "azure-devops-extension-api/Release"
 import { Build, BuildRestClient, Attachment } from "azure-devops-extension-api/Build"
@@ -21,7 +19,7 @@ const ATTACHMENT_TYPE = "postman.summary";
 const REPORT_ATTACHMENT_TYPE = "postman.report";
 const OUR_TASK_IDS = [
   // PROD
-  "f5384bf0-1b5c-11ea-b0cc-5b064956a213",
+  "575a0243-fbcf-4695-98cf-118d49c1e2d8",
   // Finastra Dev
   "0e9f302d-865d-52f6-aba0-a0e258493f6d"
 ]
@@ -159,7 +157,7 @@ class ReportCard extends React.Component<ReportCardProps> {
   private onCollapseClicked = () => {
     this.collapsed.value = !this.collapsed.value;
     if (this.content.value == this.initialContent) {
-      this.props.attachmentClient.download(this.props.report.href).then(report => {
+      this.props.attachmentClient.downloadReportContent(this.props.report.name).then(report => {
         this.content.value = '<iframe class="full-size" srcdoc="' + this.escapeHTML(report) + '"></iframe>'
       }).catch(err => {
         this.content.value = err
@@ -246,6 +244,10 @@ export default class TaskAttachmentPanel extends React.Component<TaskAttachmentP
   }
 }
 
+
+/**
+* Abstrac AttachemntClient
+*/
 abstract class AttachmentClient {
   protected attachments: (Attachment  | ReleaseTaskAttachment)[] = []
   protected authHeaders: Object = undefined
@@ -254,28 +256,16 @@ abstract class AttachmentClient {
   constructor() {}
 
   // Retrieve attachments and attachment contents from AzDO
-  abstract async init(): Promise<void>
+  abstract init(): Promise<void>
+
+  abstract downloadSummaryContent(summaryReportName:string): Promise<string>
+  
+  abstract downloadReportContent(reportName:string): Promise<string>
+
+  abstract getReportAttachments(): Promise<Attachment[] | ReleaseTaskAttachment[]>
 
   public getAttachments() : (Attachment  | ReleaseTaskAttachment)[] {
     return this.attachments
-  }
-
-  private async getAuthHeaders(): Promise<Object> {
-    if (this.authHeaders === undefined) {
-      console.log('Get access token')
-      const accessToken = await SDK.getAccessToken()
-      const b64encodedAuth = Buffer.from(':' + accessToken).toString('base64')
-      this.authHeaders = { headers: {'Authorization': 'Basic ' + b64encodedAuth} }
-    }
-    return this.authHeaders
-  }
-
-  public async download(href: string): Promise<string> {
-    const response = await fetch(href, (await this.getAuthHeaders()))
-    if (!response.ok) {
-      throw new Error(response.statusText)
-    }
-    return await response.text()
   }
 
   public getDownloadableAttachment(attachmentName: string): Attachment | ReleaseTaskAttachment {
@@ -286,13 +276,11 @@ abstract class AttachmentClient {
     return attachment
   }
 
-  abstract async getReportAttachments(): Promise<Attachment[] | ReleaseTaskAttachment[]>
-
   public async getReportSummary(attachmentName: string): Promise<ReportProps[]> {
     setText('Looking for Summary File')
     console.log("Get " + attachmentName + " attachment content")
     const attachment = this.getDownloadableAttachment(attachmentName)
-    const summaryContentJson = JSON.parse(await this.download(attachment._links.self.href))
+    const summaryContentJson = JSON.parse(await this.downloadSummaryContent(attachment.name))
     setText('Processing Summary File')
     const reports = await this.getReportAttachments()
     let data = summaryContentJson.map(report => {
@@ -307,8 +295,14 @@ abstract class AttachmentClient {
   }
 }
 
+/**
+* Build Attachemnts client
+*/
 class BuildAttachmentClient extends AttachmentClient {
   private build: Build
+
+  private recordId:string
+  private timelineId:string
 
   constructor(build: Build) {
     super()
@@ -326,13 +320,39 @@ class BuildAttachmentClient extends AttachmentClient {
     const buildClient: BuildRestClient = getClient(BuildRestClient)
     return await buildClient.getAttachments(this.build.project.id, this.build.id, REPORT_ATTACHMENT_TYPE)
   }
+
+  private async getAttachmentsContent(attachmentName: string, type: string): Promise<string> {
+    console.log('Get report content' + attachmentName)
+    var decoder= new TextDecoder('utf-8');
+    const buildClient: BuildRestClient = getClient(BuildRestClient)
+    return await buildClient.getAttachment(this.build.project.id, this.build.id, this.timelineId, this.recordId, type, attachmentName)
+          .then((result)=>{
+            return decoder.decode(result)
+          })
+          .catch((error: Error) => {
+            throw new Error(error.message)
+          })
+  }
+
+  public async downloadSummaryContent(name:string): Promise<string> {
+    return this.getAttachmentsContent(name,ATTACHMENT_TYPE)
+  }
+
+  public async downloadReportContent(name:string): Promise<string> {
+    return this.getAttachmentsContent(name,REPORT_ATTACHMENT_TYPE)
+  }
 }
 
+/**
+* Release Attachemnts client
+*/
   class ReleaseAttachmentClient extends AttachmentClient {
     private releaseEnvironment: ReleaseEnvironment
-    private projectId
-    private deployStepAttempt
-    private runPlanId
+    private projectId:string
+    private deployStepAttempt:number
+    private runPlanId:string
+    private recordId:string
+    private timelineId:string
 
     constructor(releaseEnvironment: ReleaseEnvironment) {
       super()
@@ -379,13 +399,16 @@ class BuildAttachmentClient extends AttachmentClient {
       this.projectId = project.id
       this.deployStepAttempt = deployStep.attempt
       console.log('Get attachment list')
-      this.attachments = await releaseClient.getReleaseTaskAttachments(project.id, releaseId, environmentId, deployStep.attempt, this.runPlanId, ATTACHMENT_TYPE)
+      const releaseAttachments= await releaseClient.getReleaseTaskAttachments(project.id, releaseId, environmentId, deployStep.attempt, this.runPlanId, ATTACHMENT_TYPE)
+      this.attachments = releaseAttachments
       if (this.attachments.length === 0) {
         throw new Error("There is no attachment")
       }
       if (this.attachments.length >1) {
         throw new Error("There is more than a single attachment, this is not expected")
       }
+      this.recordId=releaseAttachments[0].recordId
+      this.timelineId=releaseAttachments[0].timelineId
     }
 
     public async getReportAttachments(): Promise<ReleaseTaskAttachment[]> {
@@ -394,4 +417,24 @@ class BuildAttachmentClient extends AttachmentClient {
       return await releaseClient.getReleaseTaskAttachments(this.projectId, this.releaseEnvironment.releaseId, this.releaseEnvironment.id, this.deployStepAttempt, this.runPlanId, REPORT_ATTACHMENT_TYPE)
     }
 
+    private async getAttachmentsContent(attachmentName: string, type: string): Promise<string> {
+      console.log('Get report content' + attachmentName)
+      var decoder= new TextDecoder('utf-8');
+      const releaseClient: ReleaseRestClient = getClient(ReleaseRestClient)
+      return releaseClient.getReleaseTaskAttachmentContent(this.projectId, this.releaseEnvironment.releaseId, this.releaseEnvironment.id, this.deployStepAttempt, this.runPlanId, this.timelineId, this.recordId, type ,attachmentName)
+            .then((result)=>{
+              return decoder.decode(result)
+            })
+            .catch((error: Error) => {
+              throw new Error(error.message)
+            })
+    }
+
+    public async downloadSummaryContent(name:string): Promise<string> {
+      return this.getAttachmentsContent(name,ATTACHMENT_TYPE)
+    }
+
+    public async downloadReportContent(name:string): Promise<string> {
+      return this.getAttachmentsContent(name,REPORT_ATTACHMENT_TYPE)
+    }
   }

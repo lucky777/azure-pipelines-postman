@@ -1,5 +1,9 @@
 # Azure Devops Postman HTML Report
 
+## About this fork
+
+This is a fork of https://github.com/maciejmaciejewski/azure-pipelines-postman repository.The issue with CORS error https://github.com/maciejmaciejewski/azure-pipelines-postman/issues/4  has been solved.
+
 ## About
 
 This Azure DevOps extension provides task for Publishing Postman / Newman HTML Reports into built into Azure Storage.

@@ -3,6 +3,7 @@ const CopyWebpackPlugin = require("copy-webpack-plugin");
 const webpack = require('webpack');
 
 module.exports = {
+    target: "web",
     entry: {
        tabContent:  "./src/tabContent.tsx",
     },
@@ -33,11 +34,9 @@ module.exports = {
                 use: ["style-loader", "css-loader"],
             },
             {
-                test: /\.woff$/,
-                use: [{
-                    loader: 'base64-inline-loader'
-                }]
-            },
+                test: /\.(woff|woff2|eot|ttf|otf)$/i,
+                type: 'asset/resource',
+              },
             {
                 test: /\.html$/,
                 loader: "file-loader"
@@ -45,10 +44,11 @@ module.exports = {
         ]
     },
     plugins: [
-        new CopyWebpackPlugin([
+        new CopyWebpackPlugin({
+            patterns:[
             { from: "*.html", context: "src/" },
             { from: "images/", context: ".", to: 'images' },
-        ]),
+        ]}),
         new webpack.SourceMapDevToolPlugin({})
-    ]
+    ],
 };
